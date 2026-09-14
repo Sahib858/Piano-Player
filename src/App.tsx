@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
-type Note = { midi: number; time: number; duration: number; hand: 'L' | 'R' }
+type Note = { midi: number; time: number; duration: number; hand: 'L' | 'R'; vel?: number }
 
 const YT_URL = 'https://www.youtube.com/watch?v=8y7Kednwa-M'
 const YT_TITLE = 'Ek Oliyo Lutavane Betho — Lakhona Taranhar (devotional)'
@@ -54,6 +54,16 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false)
   const mp3Input = useRef<HTMLInputElement>(null)
   const midiInput = useRef<HTMLInputElement>(null)
+  const [preset, setPreset] = useState<'piano' | 'dense' | 'soft' | 'custom'>('piano')
+  const [onset, setOnset] = useState(0.5)
+  const [frame, setFrame] = useState(0.3)
+  const [minLen, setMinLen] = useState(5)
+
+  function applyPreset(p: 'piano' | 'dense' | 'soft') {
+    setPreset(p)
+    const map = { piano: [0.5, 0.3, 5], dense: [0.68, 0.42, 9], soft: [0.32, 0.24, 3] } as const
+    setOnset(map[p][0]); setFrame(map[p][1]); setMinLen(map[p][2])
+  }
 
   const viewHigh = lowNote + 36
   const shown = useMemo(() => notes.map(n => ({ ...n, midi: n.midi + transpose })), [notes, transpose])
@@ -159,9 +169,11 @@ export default function App() {
       const y = yHead - h
       const active = t >= n.time && t <= n.time + n.duration + 0.05
       const base = n.hand === 'L' ? '0,229,204' : '139,108,255'
+      const v = n.vel ?? 0.85
+      const alpha = active ? 1 : 0.5 + v * 0.4
       ctx.shadowColor = `rgba(${base},${active ? 0.9 : 0.45})`
       ctx.shadowBlur = active ? 16 : 8
-      ctx.fillStyle = `rgba(${base},${active ? 1 : 0.82})`
+      ctx.fillStyle = `rgba(${base},${alpha})`
       const bw = isBlack(n.midi) ? wNote * 0.88 : wNote * 0.9
       ctx.beginPath()
       ctx.roundRect(x + 1.5, y, Math.max(4, bw - 3), h, 6)
@@ -253,12 +265,12 @@ export default function App() {
     setTxStage('starting…')
     try {
       const { transcribeAudioFile } = await import('./lib/transcribe')
-      const out = await transcribeAudioFile(audioFile, (p, s) => { setTxProg(p); setTxStage(s) })
+      const { notes: out, clipped } = await transcribeAudioFile(audioFile, (p, s) => { setTxProg(p); setTxStage(s) }, { onsetThresh: onset, frameThresh: frame, minNoteLen: minLen })
       if (out.length) {
-        setNotes(out.map(n => ({ midi: n.midi, time: n.time, duration: n.duration, hand: n.hand })))
-        setNoteSrc(`AI Basic Pitch (${out.length} notes)`)
+        setNotes(out.map(n => ({ midi: n.midi, time: n.time, duration: n.duration, hand: n.hand, vel: n.vel })))
+        setNoteSrc(`AI ${preset} ${onset.toFixed(2)}/${frame.toFixed(2)}/${minLen} (${out.length} notes${clipped ? ', 8min cap' : ''})`)
       } else {
-        setTxStage('No notes found — try a clearer piano recording or lower thresholds')
+        setTxStage('No notes found — try Soft preset or a clearer piano recording')
       }
     } catch (err) {
       setTxStage(`Transcribe failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -275,7 +287,7 @@ export default function App() {
     const lh = midi.addTrack()
     lh.name = 'Left hand (AI)'
     for (const n of notes) {
-      ;(n.hand === 'L' ? lh : rh).addNote({ midi: n.midi, time: n.time, duration: n.duration, velocity: 0.9 })
+      ;(n.hand === 'L' ? lh : rh).addNote({ midi: n.midi, time: n.time, duration: n.duration, velocity: n.vel ?? 0.85 })
     }
     const bytes = midi.toArray()
     const blob = new Blob([bytes as unknown as BlobPart], { type: 'audio/midi' })
@@ -358,6 +370,20 @@ export default function App() {
           <div className="row">
             <button className="primary" onClick={onTranscribe} disabled={!audioFile || txBusy}>{txBusy ? `Transcribing ${Math.round(txProg * 100)}%…` : '✨ Transcribe with AI'}</button>
             <button onClick={onExportMidi} disabled={!notes.length}>Export MIDI</button>
+          </div>
+          <div className="seg" role="group" aria-label="Accuracy preset">
+            {(['piano', 'dense', 'soft'] as const).map(p => (
+              <button key={p} className={preset === p ? 'on' : ''} disabled={txBusy} onClick={() => applyPreset(p)} title={p === 'piano' ? 'Clean piano solo (balanced)' : p === 'dense' ? 'Dense mix / kirtan with vocals + percussion (fewer false notes)' : 'Soft / quiet passages (catches more notes)'}>
+                {p === 'piano' ? 'Piano' : p === 'dense' ? 'Dense mix' : 'Soft'}
+              </button>
+            ))}
+          </div>
+          <div className="row">
+            <label>Onset <input className="seek" style={{ width: 110 }} type="range" min={0.2} max={0.8} step={0.02} value={onset} disabled={txBusy} onChange={e => { setOnset(Number(e.target.value)); setPreset('custom') }} /> {onset.toFixed(2)}</label>
+            <label>Frame <input className="seek" style={{ width: 110 }} type="range" min={0.2} max={0.6} step={0.02} value={frame} disabled={txBusy} onChange={e => { setFrame(Number(e.target.value)); setPreset('custom') }} /> {frame.toFixed(2)}</label>
+            <label>Min len <select className="slim" value={minLen} disabled={txBusy} onChange={e => { setMinLen(Number(e.target.value)); setPreset('custom') }}>
+              {[3, 5, 7, 9, 11].map(v => <option key={v} value={v}>{v}</option>)}
+            </select></label>
           </div>
           {(txBusy || txStage) && <div className="progress"><i style={{ width: `${Math.round(txProg * 100)}%` }} /></div>}
           {txStage && <div className="kbd-hint">{txStage}{!audioFile && ' — upload an MP3 first.'}</div>}

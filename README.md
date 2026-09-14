@@ -42,10 +42,18 @@ npm run dev
 2. Install as PWA on phone: Share/Add to Home Screen.
 3. `./scripts/download.sh "https://www.youtube.com/watch?v=8y7Kednwa-M"` – needs yt-dlp + ffmpeg, then upload MP3 (do not redistribute copyrighted audio).
 
+## Transcription accuracy (how good is the MIDI?)
+
+- **Clean piano solo:** very good (~80%+ note F1 on benchmarks). Use `Piano` preset (0.50/0.30/5).
+- **Dense kirtan mix (vocals + harmonium + tabla):** good melody approximation, not note-perfect — drums confuse onsets, vocals pull pitch. Use `Dense mix` preset (0.68/0.42/9) for fewer false notes, then Export MIDI and clean in a DAW.
+- **Best results:** clear single-instrument audio, 320kbps MP3/WAV, no clipping; app peak-normalizes quiet phone recordings, merges pedal splits, filters sub-90ms blips, splits hands at C4 with velocity dynamics.
+- **To push further:** re-transcribe with `Soft` for quiet passages, compare presets, keep the MIDI with most musical result. True stem separation (vocals/drums removal) is the next upgrade if you need mix-perfect piano.
+
 ## Roadmap
 
 - [x] V0.1: MP3 upload + Synthesia demo notes + speed/transpose + PWA install + Stage Mode shell + setlist
 - [x] V0.2: Basic Pitch in-browser transcribe (MP3 → notes + Export MIDI, offline model in `public/model`)
+- [x] V0.2.1: accuracy presets (Piano/Dense/Soft) + onset/frame tuning + pedal-merge + velocity
 - [ ] V0.3: loop section, wait mode, MIDI auto-align, worship chord view
 
 ## Note on YouTube MP3s
