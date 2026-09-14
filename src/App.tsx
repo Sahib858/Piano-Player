@@ -51,6 +51,9 @@ export default function App() {
   const [txBusy, setTxBusy] = useState(false)
   const [txProg, setTxProg] = useState(0)
   const [txStage, setTxStage] = useState('')
+  const [dragOver, setDragOver] = useState(false)
+  const mp3Input = useRef<HTMLInputElement>(null)
+  const midiInput = useRef<HTMLInputElement>(null)
 
   const viewHigh = lowNote + 36
   const shown = useMemo(() => notes.map(n => ({ ...n, midi: n.midi + transpose })), [notes, transpose])
@@ -120,67 +123,96 @@ export default function App() {
     if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const t = a?.currentTime || 0
-    const kbH = 72
+    const kbH = 76
     const rollH = H - kbH
-    ctx.fillStyle = '#080810'
+    const bg = ctx.createLinearGradient(0, 0, 0, H)
+    bg.addColorStop(0, '#0a0a16')
+    bg.addColorStop(1, '#07070d')
+    ctx.fillStyle = bg
     ctx.fillRect(0, 0, W, H)
     const range = viewHigh - lowNote + 1
     const xOf = (m: number) => ((m - lowNote) / range) * W
     const wNote = W / range
-    const pxPerSec = 150
-    // beat grid
-    ctx.strokeStyle = 'rgba(255,255,255,.06)'
-    ctx.lineWidth = 1
+    const pxPerSec = 155
+    // beat grid + bar accents
     for (let b = Math.floor(t); b < t + rollH / pxPerSec + 1; b++) {
       const y = rollH - (b - t) * pxPerSec
+      ctx.strokeStyle = b % 4 === 0 ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.05)'
+      ctx.lineWidth = b % 4 === 0 ? 1.2 : 1
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
     }
-    // falling notes
+    // lane separators
+    ctx.strokeStyle = 'rgba(255,255,255,.045)'
+    for (let m = lowNote; m <= viewHigh + 1; m++) {
+      const x = xOf(m)
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rollH); ctx.stroke()
+    }
+    // falling notes with glow
+    ctx.save()
     for (const n of shown) {
       if (n.midi < lowNote || n.midi > viewHigh) continue
       const dt = n.time - t
       if (dt > rollH / pxPerSec + 2 || dt + n.duration < -1) continue
       const x = xOf(n.midi)
       const yHead = rollH - dt * pxPerSec
-      const h = Math.max(10, n.duration * pxPerSec)
+      const h = Math.max(12, n.duration * pxPerSec)
       const y = yHead - h
       const active = t >= n.time && t <= n.time + n.duration + 0.05
-      ctx.fillStyle = n.hand === 'L' ? (active ? '#00e5cc' : 'rgba(0,229,204,.75)') : (active ? '#a78bff' : 'rgba(124,92,255,.8)')
-      ctx.strokeStyle = active ? '#fff' : 'transparent'
-      const bw = isBlack(n.midi) ? wNote * 0.9 : wNote * 0.92
+      const base = n.hand === 'L' ? '0,229,204' : '139,108,255'
+      ctx.shadowColor = `rgba(${base},${active ? 0.9 : 0.45})`
+      ctx.shadowBlur = active ? 16 : 8
+      ctx.fillStyle = `rgba(${base},${active ? 1 : 0.82})`
+      const bw = isBlack(n.midi) ? wNote * 0.88 : wNote * 0.9
       ctx.beginPath()
-      ctx.roundRect(x + 1, y, bw - 2, h, 5)
+      ctx.roundRect(x + 1.5, y, Math.max(4, bw - 3), h, 6)
       ctx.fill()
-      if (active) ctx.stroke()
+      // top cap highlight
+      ctx.shadowBlur = 0
+      ctx.fillStyle = 'rgba(255,255,255,.35)'
+      ctx.fillRect(x + 4, y + 2, Math.max(2, bw - 8), 2)
     }
+    ctx.restore()
     // play line
-    ctx.fillStyle = '#ff5d73'
-    ctx.fillRect(0, rollH - 2, W, 2)
+    const lg = ctx.createLinearGradient(0, 0, W, 0)
+    lg.addColorStop(0, '#ff5d73')
+    lg.addColorStop(0.5, '#ff9d6b')
+    lg.addColorStop(1, '#7c5cff')
+    ctx.fillStyle = lg
+    ctx.fillRect(0, rollH - 2.5, W, 2.5)
     // keyboard
     const whites: number[] = []
     for (let m = lowNote; m <= viewHigh; m++) if (!isBlack(m)) whites.push(m)
     const ww = W / whites.length
     whites.forEach((m, i) => {
       const sounding = shown.some(n => n.midi === m && t >= n.time && t <= n.time + n.duration + 0.05)
-      ctx.fillStyle = sounding ? '#7c5cff' : '#f2f2f7'
-      ctx.fillRect(i * ww + 1, rollH, ww - 2, kbH)
-      ctx.fillStyle = '#555'
-      ctx.font = '10px system-ui'
-      if (m % 12 === 0) ctx.fillText(midiName(m), i * ww + 4, H - 8)
+      const g = ctx.createLinearGradient(0, rollH, 0, H)
+      if (sounding) { g.addColorStop(0, '#a78bff'); g.addColorStop(1, '#6d4dff') }
+      else { g.addColorStop(0, '#ffffff'); g.addColorStop(1, '#cfcfe0') }
+      ctx.fillStyle = g
+      ctx.strokeStyle = 'rgba(0,0,0,.4)'
+      ctx.beginPath()
+      ctx.roundRect(i * ww + 1, rollH + 3, ww - 2, kbH - 3, [0, 0, 6, 6])
+      ctx.fill(); ctx.stroke()
+      if (m % 12 === 0) {
+        ctx.fillStyle = sounding ? '#fff' : '#6b6b85'
+        ctx.font = '600 10px system-ui'
+        ctx.fillText(midiName(m), i * ww + 5, H - 9)
+      }
     })
     for (let m = lowNote; m <= viewHigh; m++) {
       if (!isBlack(m)) continue
       const wi = whites.filter(w => w < m).length
-      const x = wi * ww - ww * 0.3
+      const x = wi * ww - ww * 0.32
       const sounding = shown.some(n => n.midi === m && t >= n.time && t <= n.time + n.duration + 0.05)
-      ctx.fillStyle = sounding ? '#00e5cc' : '#15151f'
-      ctx.fillRect(x, rollH, ww * 0.6, kbH * 0.6)
+      ctx.fillStyle = sounding ? '#00e5cc' : '#14141f'
+      ctx.strokeStyle = sounding ? '#fff' : 'rgba(255,255,255,.14)'
+      ctx.beginPath()
+      ctx.roundRect(x, rollH + 3, ww * 0.64, kbH * 0.58, [0, 0, 5, 5])
+      ctx.fill(); ctx.stroke()
     }
   }
 
-  async function onMp3(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0]
-    if (!f) return
+  async function saveMp3(f: File) {
     const url = URL.createObjectURL(f)
     setAudioUrl(url)
     setAudioName(f.name)
@@ -191,10 +223,13 @@ export default function App() {
       await set('pp-audio-name', f.name)
     } catch { /* ignore */ }
   }
-
-  async function onMidi(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onMp3(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
-    if (!f) return
+    if (f) void saveMp3(f)
+    e.target.value = ''
+  }
+
+  async function loadMidiFile(f: File) {
     const { Midi } = await import('@tonejs/midi')
     const buf = await f.arrayBuffer()
     const midi = new Midi(buf)
@@ -204,6 +239,11 @@ export default function App() {
     })
     out.sort((a, b) => a.time - b.time)
     if (out.length) { setNotes(out); setNoteSrc(`MIDI: ${f.name} (${out.length} notes)`) }
+  }
+  async function onMidi(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (f) await loadMidiFile(f)
+    e.target.value = ''
   }
 
   async function onTranscribe() {
@@ -289,38 +329,53 @@ export default function App() {
           <h2>Library</h2>
           <div className="song active">
             <div className="t">{YT_TITLE}</div>
-            <div className="s"><a href={YT_URL} target="_blank" rel="noreferrer">YouTube source</a> → download MP3 locally, then upload below. Respect rights/ToS.</div>
+            <div className="s"><a href={YT_URL} target="_blank" rel="noreferrer">YouTube source</a> → download MP3 you own, then drop below. Respect rights/ToS.</div>
           </div>
           {setlist.slice(1).map(s => <div key={s} className="song"><div className="t">{s}</div></div>)}
-          <div className="row">
-            <label>MP3 <input type="file" accept="audio/mpeg,audio/*" onChange={onMp3} /></label>
+          <div
+            className={`drop${dragOver ? ' over' : ''}`}
+            role="button" tabIndex={0}
+            onClick={() => mp3Input.current?.click()}
+            onKeyDown={e => { if (e.key === 'Enter') mp3Input.current?.click() }}
+            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={e => {
+              e.preventDefault(); setDragOver(false)
+              const f = e.dataTransfer.files?.[0]
+              if (f) void saveMp3(f)
+            }}
+          >
+            <strong>{audioFile ? `♪ ${audioName}` : 'Drop MP3 here or tap to upload'}</strong>
+            <span>MP3 stays on-device (IndexedDB) for offline stage use</span>
+            <input ref={mp3Input} type="file" accept="audio/mpeg,audio/*" onChange={onMp3} />
           </div>
           <div className="row">
-            <label>MIDI <input type="file" accept=".mid,.midi" onChange={onMidi} /></label>
+            <button className="ghost" onClick={() => midiInput.current?.click()}>Import MIDI</button>
+            <input ref={midiInput} type="file" accept=".mid,.midi" onChange={onMidi} style={{ display: 'none' }} />
+            <span className="chip">Notes <b>{shown.length}</b></span>
+            <span className="chip"><b>{noteSrc}</b></span>
           </div>
-          <div className="row"><span className="pill">Notes: <b>{noteSrc}</b> • {shown.length}</span></div>
           <div className="row">
-            <button className="primary" onClick={onTranscribe} disabled={!audioFile || txBusy}>{txBusy ? `Transcribing ${Math.round(txProg * 100)}%…` : '✨ Transcribe MP3 with AI'}</button>
+            <button className="primary" onClick={onTranscribe} disabled={!audioFile || txBusy}>{txBusy ? `Transcribing ${Math.round(txProg * 100)}%…` : '✨ Transcribe with AI'}</button>
             <button onClick={onExportMidi} disabled={!notes.length}>Export MIDI</button>
           </div>
-          {txBusy && <input className="seek" type="range" min={0} max={1} step={0.01} value={txProg} readOnly />}
+          {(txBusy || txStage) && <div className="progress"><i style={{ width: `${Math.round(txProg * 100)}%` }} /></div>}
           {txStage && <div className="kbd-hint">{txStage}{!audioFile && ' — upload an MP3 first.'}</div>}
           <div className="row">
-            <button onClick={() => { const n = prompt('Add to setlist:'); if (n) setSetlist(s => [...s, n]) }}>+ Setlist</button>
-            <button onClick={() => { setNotes(genDemoNotes(duration)); setNoteSrc('demo-pattern') }}>Reset demo notes</button>
-          </div>
-          <h2 style={{ marginTop: 14 }}>How to get your MP3</h2>
-          <div className="kbd-hint">
-            Upload an MP3 you own, then hit Transcribe — runs fully in-browser (Basic Pitch, ~742KB model in <code className="inline">public/model</code>, offline after first load).
-            Best on clear piano; dense mixes need MIDI cleanup. For your kirtan: <code className="inline">scripts/download.sh "{YT_URL}"</code> needs <code className="inline">yt-dlp</code> + <code className="inline">ffmpeg</code>, then upload here (respect rights/ToS, saved to IndexedDB for stage offline).
+            <button className="ghost" onClick={() => { const n = prompt('Add to setlist:'); if (n) setSetlist(s => [...s, n]) }}>+ Setlist</button>
+            <button className="ghost" onClick={() => { setNotes(genDemoNotes(duration)); setNoteSrc('demo-pattern') }}>Reset demo</button>
           </div>
           <div className="row">
             <label>PA / Bluetooth out{' '}
-              <select onChange={e => setOutput(e.target.value)}>
+              <select className="slim" onChange={e => setOutput(e.target.value)}>
                 <option value="">Default</option>
                 {outputs.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
               </select>
             </label>
+          </div>
+          <div className="kbd-hint">
+            In-browser Basic Pitch (~742KB, offline after first load). Best on clear piano.
+            Kirtan helper: <code className="inline">scripts/download.sh "{YT_URL}"</code> (yt-dlp + ffmpeg).
           </div>
         </section>
 
@@ -328,25 +383,32 @@ export default function App() {
           <h2>Player — {audioName}</h2>
           <audio ref={audioRef} src={audioUrl} preload="metadata" />
           <div className="transport">
-            <button className="primary" onClick={toggle} disabled={!audioUrl}>{playing ? 'Pause' : 'Play'} ▶</button>
+            <button className="playbtn" onClick={toggle} disabled={!audioUrl} aria-label={playing ? 'Pause' : 'Play'}>{playing ? '❚❚' : '▶'}</button>
             <span className="time">{fmt(cur)} / {fmt(duration)}</span>
-            {[0.5, 0.75, 1, 1.25].map(s => (
-              <button key={s} disabled={speed === s} onClick={() => changeSpeed(s)}>{s}x</button>
-            ))}
-            <label>Transpose <select value={transpose} onChange={e => setTranspose(Number(e.target.value))}>
+            <div className="seg" role="group" aria-label="Speed">
+              {[0.5, 0.75, 1, 1.25].map(s => (
+                <button key={s} className={speed === s ? 'on' : ''} onClick={() => changeSpeed(s)}>{s}x</button>
+              ))}
+            </div>
+            <label>Key <select className="slim" value={transpose} onChange={e => setTranspose(Number(e.target.value))}>
               {[-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6].map(v => <option key={v} value={v}>{v > 0 ? `+${v}` : v}</option>)}
             </select></label>
-            <label>Octave <select value={lowNote} onChange={e => setLowNote(Number(e.target.value))}>
+            <label>View <select className="slim" value={lowNote} onChange={e => setLowNote(Number(e.target.value))}>
               {[36, 48, 60].map(v => <option key={v} value={v}>{midiName(v)}–{midiName(v + 36)}</option>)}
             </select></label>
-            <button disabled title="V0.2: pauses until you play the note">Wait mode (V0.2)</button>
           </div>
           <input className="seek" type="range" min={0} max={duration} step={0.1} value={cur} onChange={e => seek(Number(e.target.value))} />
-          <canvas ref={canvasRef} className="roll" />
+          <div className="stage-wrap">
+            <canvas ref={canvasRef} className="roll" />
+            {!audioUrl && (
+              <div className="empty"><div className="box">
+                <strong>Ready for your first song</strong>
+                <span>Drop the MP3 on the left, hit Transcribe, then Play — notes fall in sync for practice, worship or stage.</span>
+              </div></div>
+            )}
+          </div>
           <div className="kbd-hint">
-            Falling notes sync to <code className="inline">audio.currentTime</code>. Purple = right hand, teal = left.
-            Slow to 0.5x for practice, transpose for worship keys, Stage Mode for big controls on mobile.
-            {!audioUrl && <> — <b>upload the MP3 to start streaming alongside your live performance.</b></>}
+            Purple = right hand • Teal = left. 0.5x for practice, transpose for worship keys, Stage Mode for big touch targets on mobile.
           </div>
         </section>
       </div>
