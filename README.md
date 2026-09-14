@@ -56,7 +56,8 @@ npm run dev
 - [x] V0.1: MP3 upload + Synthesia demo notes + speed/transpose + PWA install + Stage Mode shell + setlist
 - [x] V0.2: Basic Pitch in-browser transcribe (MP3 → notes + Export MIDI, offline model in `public/model`)
 - [x] V0.2.1: accuracy presets (Piano/Dense/Soft) + onset/frame tuning + pedal-merge + velocity
-- [ ] V0.3: loop section, wait mode, MIDI auto-align, worship chord view
+- [x] V0.3: melody focus (lead-band + register + percussive gate + poly cap)
+- [x] V0.4: true Demucs stems (cut drums/vocals, ~170MB model once, desktop recommended) + A–B loop + wait mode (tap keys/MIDI) + worship chord view (transpose-aware)
 
 ## Note on YouTube MP3s
 
