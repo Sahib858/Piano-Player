@@ -1,0 +1,25 @@
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+import { VitePWA } from 'vite-plugin-pwa'
+
+export default defineConfig({
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      manifest: {
+        name: 'Piano Player - Follow Along',
+        short_name: 'PianoPlayer',
+        description: 'Synthesia-style follow-along piano for concerts, worship and practice.',
+        theme_color: '#0a0a14',
+        background_color: '#0a0a14',
+        display: 'standalone',
+        orientation: 'landscape',
+        start_url: '.',
+        icons: [
+          { src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }
+        ]
+      }
+    })
+  ],
+})
