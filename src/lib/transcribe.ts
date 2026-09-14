@@ -11,6 +11,12 @@ export type TxOpts = {
   normalize?: boolean
   minDurationSec?: number
   mergeGapSec?: number
+  melodyFocus?: boolean
+  leadLow?: number
+  leadHigh?: number
+  maxPoly?: number
+  percGate?: boolean
+  bandpass?: boolean
 }
 
 export const PRESETS: Record<string, Required<Pick<TxOpts, 'onsetThresh' | 'frameThresh' | 'minNoteLen' | 'melodiaTrick'>>> = {
@@ -29,7 +35,7 @@ async function getModel(): Promise<BasicPitch> {
   return cached
 }
 
-async function decodeToMono22050(file: Blob): Promise<{ mono: Float32Array; clipped: boolean }> {
+async function decodeToMono22050(file: Blob, bandpass: boolean): Promise<{ mono: Float32Array; clipped: boolean }> {
   const ab = await file.arrayBuffer()
   const AC: typeof AudioContext | undefined = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AC) throw new Error('Web Audio not supported in this browser')
@@ -41,7 +47,16 @@ async function decodeToMono22050(file: Blob): Promise<{ mono: Float32Array; clip
     const off = new OfflineAudioContext(1, Math.max(1, targetLen), 22050)
     const src = off.createBufferSource()
     src.buffer = decoded
-    src.connect(off.destination)
+    if (bandpass) {
+      // Cut kick rumble + cymbal hash, keep harmonium/vocal lead band.
+      const hp = off.createBiquadFilter()
+      hp.type = 'highpass'; hp.frequency.value = 85; hp.Q.value = 0.7
+      const lp = off.createBiquadFilter()
+      lp.type = 'lowpass'; lp.frequency.value = 5200; lp.Q.value = 0.5
+      src.connect(hp); hp.connect(lp); lp.connect(off.destination)
+    } else {
+      src.connect(off.destination)
+    }
     src.start(0)
     const rendered = await off.startRendering()
     return { mono: rendered.getChannelData(0).slice(0), clipped }
@@ -60,11 +75,13 @@ function peakNormalize(mono: Float32Array, target = 0.7): Float32Array {
   return out
 }
 
+type Flat = { midi: number; time: number; duration: number; vel: number }
+
 function postProcess(
   events: { pitchMidi: number; startTimeSeconds: number; durationSeconds: number; amplitude: number }[],
   minDur: number,
   mergeGap: number,
-): TranscribedNote[] {
+): Flat[] {
   const rows = events
     .filter(e => e.pitchMidi >= 21 && e.pitchMidi <= 108 && e.durationSeconds > 0.03)
     .map(e => ({
@@ -74,8 +91,7 @@ function postProcess(
       vel: Math.max(0.25, Math.min(1, e.amplitude ?? 0.8)),
     }))
     .sort((a, b) => a.time - b.time || a.midi - b.midi)
-  // merge same-pitch overlaps / micro-gaps (pedal + vibrato splits)
-  const merged: typeof rows = []
+  const merged: Flat[] = []
   for (const n of rows) {
     const last = merged[merged.length - 1]
     if (last && last.midi === n.midi && n.time - (last.time + last.duration) <= mergeGap) {
@@ -83,22 +99,65 @@ function postProcess(
       last.vel = Math.max(last.vel, n.vel)
     } else merged.push({ ...n })
   }
-  return merged
-    .filter(n => n.duration >= minDur)
-    .map(n => ({ ...n, duration: Math.max(minDur, n.duration), hand: (n.midi < 60 ? 'L' : 'R') as 'L' | 'R' }))
+  return merged.filter(n => n.duration >= minDur)
+}
+
+/** Melody focus: cut percussion clutter, keep the instrumental lead. */
+function focusMelody(
+  input: Flat[],
+  opts: { leadLow: number; leadHigh: number; maxPoly: number; percGate: boolean },
+): { notes: Flat[]; removed: number } {
+  const { leadLow, leadHigh, maxPoly, percGate } = opts
+  const startCount = input.length
+  // 1) Register: keep sustained bass roots, drop out-of-band blips.
+  let notes = input.filter(n => {
+    if (n.midi >= leadLow && n.midi <= leadHigh) return true
+    // keep long low roots (harmonium bass), drop short low thumps (tabla/kick artifacts)
+    if (n.midi < leadLow && n.duration >= 0.5 && n.vel >= 0.55) return true
+    return false
+  })
+  if (percGate) {
+    // 2) Percussion gate: unpitched hits surface as short + weak tonal notes.
+    notes = notes.filter(n => !(n.duration < 0.12 && n.vel < 0.55))
+    // 3) Machine-gun repeats: rapid same-pitch flams are drum artifacts, keep the first.
+    const out: Flat[] = []
+    for (const n of notes) {
+      const last = out[out.length - 1]
+      if (last && last.midi === n.midi && n.duration < 0.15 && last.duration < 0.15 && n.time - last.time < 0.12) continue
+      out.push(n)
+    }
+    notes = out
+  }
+  // 4) Poly cap: keep the strongest voices per moment (lead + harmony), drop the wash.
+  const scored = notes.map(n => ({ n, score: n.vel * (0.5 + Math.min(1.5, n.duration)) + (n.midi >= leadLow ? 0.15 : 0) }))
+  scored.sort((a, b) => b.score - a.score)
+  const kept: Flat[] = []
+  for (const { n } of scored) {
+    let overlap = 0
+    for (const k of kept) {
+      if (n.time < k.time + k.duration && k.time < n.time + n.duration) {
+        overlap++
+        if (overlap >= maxPoly) break
+      }
+    }
+    if (overlap < maxPoly) kept.push(n)
+  }
+  kept.sort((a, b) => a.time - b.time || a.midi - b.midi)
+  return { notes: kept, removed: startCount - kept.length }
 }
 
 export async function transcribeAudioFile(
   file: Blob,
   onProgress: (p: number, stage: string) => void = () => {},
   opts: TxOpts = {},
-): Promise<{ notes: TranscribedNote[]; clipped: boolean }> {
+): Promise<{ notes: TranscribedNote[]; clipped: boolean; removed: number }> {
   const {
     onsetThresh = 0.5, frameThresh = 0.3, minNoteLen = 5, melodiaTrick = true,
     normalize = true, minDurationSec = 0.09, mergeGapSec = 0.04,
+    melodyFocus = false, leadLow = 57, leadHigh = 96, maxPoly = 2, percGate = true, bandpass = melodyFocus,
   } = opts
-  onProgress(0.02, 'decoding + resampling to 22050Hz mono…')
-  const { mono, clipped } = await decodeToMono22050(file)
+  onProgress(0.02, bandpass ? 'decoding + focusing lead band (85Hz–5.2kHz)…' : 'decoding + resampling to 22050Hz mono…')
+  const { mono, clipped } = await decodeToMono22050(file, bandpass)
   const ready = normalize ? peakNormalize(mono) : mono
   onProgress(0.08, 'loading Basic Pitch model…')
   const bp = await getModel()
@@ -110,11 +169,19 @@ export async function transcribeAudioFile(
     (f, o, c) => { frames.push(...f); onsets.push(...o); contours.push(...c) },
     (p: number) => onProgress(0.08 + p * 0.84, `transcribing… ${Math.round(p * 100)}%`),
   )
-  onProgress(0.94, 'cleaning notes (merge + filter)…')
+  onProgress(0.94, melodyFocus ? 'isolating melody (cutting percussion)…' : 'cleaning notes (merge + filter)…')
   const events = noteFramesToTime(
     addPitchBendsToNoteEvents(contours, outputToNotesPoly(frames, onsets, onsetThresh, frameThresh, minNoteLen, true, null, null, melodiaTrick)),
   )
-  const notes = postProcess(events, minDurationSec, mergeGapSec)
-  onProgress(1, `done — ${notes.length} notes${clipped ? ' (first 8 min only)' : ''}`)
-  return { notes, clipped }
+  const base = postProcess(events, minDurationSec, mergeGapSec)
+  let notes: Flat[] = base
+  let removed = 0
+  if (melodyFocus) {
+    const r = focusMelody(base, { leadLow, leadHigh, maxPoly, percGate })
+    notes = r.notes
+    removed = r.removed
+  }
+  const out: TranscribedNote[] = notes.map(n => ({ ...n, hand: (n.midi < 60 ? 'L' : 'R') as 'L' | 'R' }))
+  onProgress(1, `done — ${out.length} melody notes${removed ? ` (cut ${removed} percussion/clutter)` : ''}${clipped ? ' (first 8 min)' : ''}`)
+  return { notes: out, clipped, removed }
 }

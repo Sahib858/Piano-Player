@@ -47,6 +47,8 @@ npm run dev
 - **Clean piano solo:** very good (~80%+ note F1 on benchmarks). Use `Piano` preset (0.50/0.30/5).
 - **Dense kirtan mix (vocals + harmonium + tabla):** good melody approximation, not note-perfect — drums confuse onsets, vocals pull pitch. Use `Dense mix` preset (0.68/0.42/9) for fewer false notes, then Export MIDI and clean in a DAW.
 - **Best results:** clear single-instrument audio, 320kbps MP3/WAV, no clipping; app peak-normalizes quiet phone recordings, merges pedal splits, filters sub-90ms blips, splits hands at C4 with velocity dynamics.
+- **Melody focus (NEW, default ON):** lead-band filter (85Hz–5.2kHz) cuts kick rumble/cymbal hash, keeps lead register (57–96) + sustained bass roots, gates short/weak percussive blips, de-flams tabla repeats, caps to strongest 2 voices per moment. Report shows e.g. `cut 140 percussion/clutter`. Toggle OFF for full mix, or widen range to 48–96.
+- **Limit:** this is smart filtering, not studio stem separation — heavy percussion bleed can still ghost through. True Demucs-style vocal/drum removal is the next upgrade if needed.
 - **To push further:** re-transcribe with `Soft` for quiet passages, compare presets, keep the MIDI with most musical result. True stem separation (vocals/drums removal) is the next upgrade if you need mix-perfect piano.
 
 ## Roadmap

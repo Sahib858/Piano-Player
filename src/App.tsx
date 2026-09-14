@@ -54,10 +54,12 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false)
   const mp3Input = useRef<HTMLInputElement>(null)
   const midiInput = useRef<HTMLInputElement>(null)
-  const [preset, setPreset] = useState<'piano' | 'dense' | 'soft' | 'custom'>('piano')
-  const [onset, setOnset] = useState(0.5)
-  const [frame, setFrame] = useState(0.3)
-  const [minLen, setMinLen] = useState(5)
+  const [preset, setPreset] = useState<'piano' | 'dense' | 'soft' | 'custom'>('dense')
+  const [onset, setOnset] = useState(0.68)
+  const [frame, setFrame] = useState(0.42)
+  const [minLen, setMinLen] = useState(9)
+  const [melodyFocus, setMelodyFocus] = useState(true)
+  const [register, setRegister] = useState<'lead' | 'wide' | 'full'>('lead')
 
   function applyPreset(p: 'piano' | 'dense' | 'soft') {
     setPreset(p)
@@ -265,12 +267,13 @@ export default function App() {
     setTxStage('starting…')
     try {
       const { transcribeAudioFile } = await import('./lib/transcribe')
-      const { notes: out, clipped } = await transcribeAudioFile(audioFile, (p, s) => { setTxProg(p); setTxStage(s) }, { onsetThresh: onset, frameThresh: frame, minNoteLen: minLen })
+      const band = register === 'full' ? { leadLow: 21, leadHigh: 108 } : register === 'wide' ? { leadLow: 48, leadHigh: 96 } : { leadLow: 57, leadHigh: 96 }
+      const { notes: out, clipped, removed } = await transcribeAudioFile(audioFile, (p, s) => { setTxProg(p); setTxStage(s) }, { onsetThresh: onset, frameThresh: frame, minNoteLen: minLen, melodyFocus, ...band, maxPoly: 2 })
       if (out.length) {
         setNotes(out.map(n => ({ midi: n.midi, time: n.time, duration: n.duration, hand: n.hand, vel: n.vel })))
-        setNoteSrc(`AI ${preset} ${onset.toFixed(2)}/${frame.toFixed(2)}/${minLen} (${out.length} notes${clipped ? ', 8min cap' : ''})`)
+        setNoteSrc(`AI ${preset}${melodyFocus ? ' melody' : ''} ${onset.toFixed(2)}/${frame.toFixed(2)}/${minLen} (${out.length} notes${removed ? `, cut ${removed}` : ''}${clipped ? ', 8min cap' : ''})`)
       } else {
-        setTxStage('No notes found — try Soft preset or a clearer piano recording')
+        setTxStage('No notes found — try Soft preset or turn off Melody focus for full mix')
       }
     } catch (err) {
       setTxStage(`Transcribe failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -377,6 +380,16 @@ export default function App() {
                 {p === 'piano' ? 'Piano' : p === 'dense' ? 'Dense mix' : 'Soft'}
               </button>
             ))}
+          </div>
+          <div className="row">
+            <button className={melodyFocus ? 'primary' : 'ghost'} disabled={txBusy} onClick={() => setMelodyFocus(v => !v)} title="Cut percussion/rumble, keep the instrumental lead (lead band + mono-ish + percussive gate)">
+              {melodyFocus ? '✂ Melody focus ON' : 'Melody focus OFF'}
+            </button>
+            <label>Range <select className="slim" value={register} disabled={txBusy || !melodyFocus} onChange={e => setRegister(e.target.value as 'lead' | 'wide' | 'full')}>
+              <option value="lead">Lead 57–96</option>
+              <option value="wide">Wide 48–96</option>
+              <option value="full">Full 21–108</option>
+            </select></label>
           </div>
           <div className="row">
             <label>Onset <input className="seek" style={{ width: 110 }} type="range" min={0.2} max={0.8} step={0.02} value={onset} disabled={txBusy} onChange={e => { setOnset(Number(e.target.value)); setPreset('custom') }} /> {onset.toFixed(2)}</label>
