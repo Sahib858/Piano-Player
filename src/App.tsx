@@ -44,9 +44,13 @@ export default function App() {
   const [stage, setStage] = useState(false)
   const [lowNote, setLowNote] = useState(48)
   const [notes, setNotes] = useState<Note[]>(() => genDemoNotes(120))
-  const [noteSrc, setNoteSrc] = useState('demo-pattern (AI transcribe → V0.3)')
+  const [noteSrc, setNoteSrc] = useState('demo-pattern (AI transcribe ready below)')
   const [setlist, setSetlist] = useState<string[]>([YT_TITLE])
   const [outputs, setOutputs] = useState<{ id: string; label: string }[]>([])
+  const [audioFile, setAudioFile] = useState<Blob | null>(null)
+  const [txBusy, setTxBusy] = useState(false)
+  const [txProg, setTxProg] = useState(0)
+  const [txStage, setTxStage] = useState('')
 
   const viewHigh = lowNote + 36
   const shown = useMemo(() => notes.map(n => ({ ...n, midi: n.midi + transpose })), [notes, transpose])
@@ -94,6 +98,7 @@ export default function App() {
           const blob = new Blob([buf])
           setAudioUrl(URL.createObjectURL(blob))
           setAudioName(String(name || 'Restored offline MP3'))
+          setAudioFile(blob)
         }
       } catch { /* offline cache optional */ }
       try {
@@ -179,6 +184,7 @@ export default function App() {
     const url = URL.createObjectURL(f)
     setAudioUrl(url)
     setAudioName(f.name)
+    setAudioFile(f)
     try {
       const { set } = await import('idb-keyval')
       await set('pp-audio', await f.arrayBuffer())
@@ -198,6 +204,46 @@ export default function App() {
     })
     out.sort((a, b) => a.time - b.time)
     if (out.length) { setNotes(out); setNoteSrc(`MIDI: ${f.name} (${out.length} notes)`) }
+  }
+
+  async function onTranscribe() {
+    if (!audioFile) return
+    setTxBusy(true)
+    setTxProg(0)
+    setTxStage('starting…')
+    try {
+      const { transcribeAudioFile } = await import('./lib/transcribe')
+      const out = await transcribeAudioFile(audioFile, (p, s) => { setTxProg(p); setTxStage(s) })
+      if (out.length) {
+        setNotes(out.map(n => ({ midi: n.midi, time: n.time, duration: n.duration, hand: n.hand })))
+        setNoteSrc(`AI Basic Pitch (${out.length} notes)`)
+      } else {
+        setTxStage('No notes found — try a clearer piano recording or lower thresholds')
+      }
+    } catch (err) {
+      setTxStage(`Transcribe failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setTxBusy(false)
+    }
+  }
+
+  async function onExportMidi() {
+    const { Midi } = await import('@tonejs/midi')
+    const midi = new Midi()
+    const rh = midi.addTrack()
+    rh.name = 'Right hand (AI)'
+    const lh = midi.addTrack()
+    lh.name = 'Left hand (AI)'
+    for (const n of notes) {
+      ;(n.hand === 'L' ? lh : rh).addNote({ midi: n.midi, time: n.time, duration: n.duration, velocity: 0.9 })
+    }
+    const bytes = midi.toArray()
+    const blob = new Blob([bytes as unknown as BlobPart], { type: 'audio/midi' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${audioName.replace(/\.[^.]+$/, '') || 'piano'}-transcription.mid`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000)
   }
 
   function toggle() {
@@ -254,14 +300,19 @@ export default function App() {
           </div>
           <div className="row"><span className="pill">Notes: <b>{noteSrc}</b> • {shown.length}</span></div>
           <div className="row">
+            <button className="primary" onClick={onTranscribe} disabled={!audioFile || txBusy}>{txBusy ? `Transcribing ${Math.round(txProg * 100)}%…` : '✨ Transcribe MP3 with AI'}</button>
+            <button onClick={onExportMidi} disabled={!notes.length}>Export MIDI</button>
+          </div>
+          {txBusy && <input className="seek" type="range" min={0} max={1} step={0.01} value={txProg} readOnly />}
+          {txStage && <div className="kbd-hint">{txStage}{!audioFile && ' — upload an MP3 first.'}</div>}
+          <div className="row">
             <button onClick={() => { const n = prompt('Add to setlist:'); if (n) setSetlist(s => [...s, n]) }}>+ Setlist</button>
-            <button onClick={() => { setNotes(genDemoNotes(duration)); setNoteSrc('demo-pattern (AI transcribe → V0.3)') }}>Reset demo notes</button>
+            <button onClick={() => { setNotes(genDemoNotes(duration)); setNoteSrc('demo-pattern') }}>Reset demo notes</button>
           </div>
           <h2 style={{ marginTop: 14 }}>How to get your MP3</h2>
           <div className="kbd-hint">
-            V0.1 keeps it legal + offline: <code className="inline">scripts/download.sh "{YT_URL}"</code> needs <code className="inline">yt-dlp</code> + <code className="inline">ffmpeg</code> on your PC,
-            then upload the MP3 here. It saves to IndexedDB so your phone works offline on stage.
-            Auto-transcribe AI (Basic Pitch) lands in V0.3 — for now use MIDI upload or demo guide.
+            Upload an MP3 you own, then hit Transcribe — runs fully in-browser (Basic Pitch, ~742KB model in <code className="inline">public/model</code>, offline after first load).
+            Best on clear piano; dense mixes need MIDI cleanup. For your kirtan: <code className="inline">scripts/download.sh "{YT_URL}"</code> needs <code className="inline">yt-dlp</code> + <code className="inline">ffmpeg</code>, then upload here (respect rights/ToS, saved to IndexedDB for stage offline).
           </div>
           <div className="row">
             <label>PA / Bluetooth out{' '}

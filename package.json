@@ -11,6 +11,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@spotify/basic-pitch": "^1.0.1",
+    "@tensorflow/tfjs": "^4.22.0",
     "@tonejs/midi": "^2.0.28",
     "idb-keyval": "^6.2.1",
     "react": "^19.2.8",

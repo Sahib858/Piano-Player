@@ -45,8 +45,8 @@ npm run dev
 ## Roadmap
 
 - [x] V0.1: MP3 upload + Synthesia demo notes + speed/transpose + PWA install + Stage Mode shell + setlist
-- [ ] V0.2: loop section, wait mode, MIDI auto-align, worship chord view
-- [ ] V0.3: Basic Pitch auto-transcribe in-browser (your next priority)
+- [x] V0.2: Basic Pitch in-browser transcribe (MP3 → notes + Export MIDI, offline model in `public/model`)
+- [ ] V0.3: loop section, wait mode, MIDI auto-align, worship chord view
 
 ## Note on YouTube MP3s
 
